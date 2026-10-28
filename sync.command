@@ -1,5 +1,6 @@
 #!/bin/zsh
 set -e
+export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(node -e 'const fs = require("node:fs"); const config = JSON.parse(fs.readFileSync(process.argv[1], "utf8")); if (!config.projectPath) process.exit(2); process.stdout.write(config.projectPath);' "$SCRIPT_DIR/config.json")"

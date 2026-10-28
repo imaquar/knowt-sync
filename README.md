@@ -1,6 +1,6 @@
 # Knowt Sync
 
-An on-demand macOS tool that adds missing vocabulary from a Google Sheet to a Knowt flashcard set. It matches cards by term, skips existing terms, and never deletes cards or changes their definitions.
+An on-demand macOS tool that adds missing vocabulary from a Google Sheet to a Knowt flashcard set. It matches cards by term, skips existing terms, and never deletes cards or changes their definitions. It reports existing terms whose definitions differ.
 
 ## Requirements
 
@@ -10,27 +10,37 @@ An on-demand macOS tool that adds missing vocabulary from a Google Sheet to a Kn
 
 ## Set up
 
-1. Copy `config.example.json` to `config.json`:
+1. If Node.js 20+ is not installed, install it with Homebrew. If Homebrew is also missing, run its install command in Terminal:
+
+   ```bash
+   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+   ```
+
+   Follow the installer's **Next steps** to add `brew` to your shell's PATH. Then install Node.js:
+
+   ```bash
+   brew install node
+   ```
+
+2. Copy `config.example.json` to `config.json` in the project folder:
 
    ```bash
    cp config.example.json config.json
    ```
 
-2. Edit `config.json`:
+3. Edit `config.json`:
 
    - `projectPath`: the absolute path to this project folder (`pwd` prints it).
    - `googleSheetUrl`: the Google Sheet URL, including its `gid` if needed.
    - `knowtSetUrl`: the Knowt flashcard set URL. Its title does not matter.
 
-3. Install dependencies and sign in to Knowt:
+4. Install dependencies and sign in to Knowt:
 
    ```bash
    zsh setup.sh
    ```
 
    Sign in in the browser window. The setup continues automatically after login.
-
-If Node.js is not installed, install it with `brew install node` or use the [official installer](https://nodejs.org/en/download).
 
 ## Use
 

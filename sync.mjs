@@ -14,6 +14,19 @@ function key(text) {
   return String(text).normalize('NFKC').trim().replace(/\s+/g, ' ').toLocaleLowerCase('en');
 }
 
+function knowtLocation(rawUrl) {
+  let url;
+  try { url = new URL(String(rawUrl || '').trim()); }
+  catch { throw new Error('В config.json поле knowtSetUrl должно содержать ссылку на набор Knowt'); }
+  const match = url.pathname.match(/^\/flashcards\/([^/]+)(?:\/edit)?\/?$/);
+  if (url.protocol !== 'https:' || !['knowt.com', 'www.knowt.com'].includes(url.hostname) || !match) {
+    throw new Error('В config.json поле knowtSetUrl должно содержать ссылку вида https://knowt.com/flashcards/...');
+  }
+  return { url: `https://knowt.com/flashcards/${match[1]}`, id: match[1] };
+}
+
+const knowtSet = knowtLocation(config.knowtSetUrl);
+
 function parseCsv(input) {
   const rows = [];
   let row = [];
@@ -58,7 +71,11 @@ async function sheetCsvUrl() {
 }
 
 async function sheetCards() {
-  const rows = parseCsv(await getText(await sheetCsvUrl()));
+  const csv = await getText(await sheetCsvUrl());
+  if (/^\s*(?:<!doctype html|<html\b)/i.test(csv)) {
+    throw new Error('Google Таблица не вернула CSV. Проверь доступ по ссылке в config.json.');
+  }
+  const rows = parseCsv(csv);
   const cards = [];
   const seen = new Map();
   for (let i = 0; i < rows.length; i++) {
@@ -100,7 +117,7 @@ function findSet(value) {
 }
 
 async function knowtCards() {
-  const html = await getText(config.knowtSetUrl);
+  const html = await getText(knowtSet.url);
   const scripts = [...html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/g)];
   for (const [, script] of scripts) {
     if (!script.includes('serverFlashcardSet')) continue;
@@ -112,8 +129,7 @@ async function knowtCards() {
     if (colon < 0) continue;
     const set = findSet(JSON.parse(record.slice(colon + 1)));
     if (set) {
-      const urlId = new URL(config.knowtSetUrl).pathname.split('/')[2];
-      if (set.flashcardSetId !== urlId) throw new Error('Knowt вернул другой набор');
+      if (set.flashcardSetId !== knowtSet.id) throw new Error('Knowt вернул другой набор');
       return set.flashcards.filter(card => !card.disabled).map(card => ({
         term: htmlText(card.term), definition: htmlText(card.definition)
       }));
@@ -122,7 +138,15 @@ async function knowtCards() {
   throw new Error('Не удалось прочитать карточки Knowt. Возможно, набор больше не публичный или формат страницы изменился.');
 }
 
-const editUrl = config.knowtSetUrl + '/edit';
+const editUrl = `${knowtSet.url}/edit`;
+
+function isEditorUrl(rawUrl) {
+  try {
+    const url = new URL(rawUrl);
+    return url.protocol === 'https:' && ['knowt.com', 'www.knowt.com'].includes(url.hostname) &&
+      url.pathname.replace(/\/+$/, '') === new URL(editUrl).pathname;
+  } catch { return false; }
+}
 
 async function openEditor(headless) {
   await mkdir(runtime, { recursive: true });
@@ -138,7 +162,7 @@ async function openEditor(headless) {
 }
 
 async function editorReady(page, timeout = 2000) {
-  if (page.url() !== editUrl) return false;
+  if (!isEditorUrl(page.url())) return false;
   try {
     await page.getByRole('button', { name: 'Save', exact: true }).first().waitFor({ timeout });
     return !(await page.getByRole('button', { name: 'Login', exact: true }).isVisible());
@@ -197,9 +221,15 @@ async function login() {
 async function sync() {
   const source = await sheetCards();
   const current = await knowtCards();
-  const currentTerms = new Set(current.map(card => key(card.term)));
-  const missing = source.filter(card => !currentTerms.has(key(card.term)));
-  console.log(`Таблица: ${source.length}; Knowt: ${current.length}; новых: ${missing.length}`);
+  const currentByTerm = new Map(current.map(card => [key(card.term), key(card.definition)]));
+  const missing = source.filter(card => !currentByTerm.has(key(card.term)));
+  const differentDefinitions = source.filter(card =>
+    currentByTerm.has(key(card.term)) && currentByTerm.get(key(card.term)) !== key(card.definition)
+  );
+  console.log(`Таблица: ${source.length}; Knowt: ${current.length}; новых: ${missing.length}; отличаются переводы: ${differentDefinitions.length}`);
+  if (differentDefinitions.length) {
+    console.log(`Переводы существующих карточек не изменены: ${differentDefinitions.map(card => card.term).join(', ')}`);
+  }
   if (mode === '--check' || !missing.length) {
     if (missing.length) console.log(missing.map(card => card.term).join('\n'));
     return;
@@ -240,19 +270,25 @@ async function sync() {
     }
     await search.fill('');
     await page.getByRole('button', { name: 'Save', exact: true }).first().click();
-    await page.getByText('Saved!', { exact: true }).waitFor({ timeout: 30000 });
 
-    // Проверяем результат на сервере, а не по локальному состоянию браузера.
+    // Проверяем на сервере и слово, и перевод, даже если сообщение Saved! не появилось.
     let confirmed = false;
-    for (let attempt = 0; attempt < 12; attempt++) {
-      const terms = new Set((await knowtCards()).map(card => key(card.term)));
-      if (missing.every(card => terms.has(key(card.term)))) { confirmed = true; break; }
-      await new Promise(resolve => setTimeout(resolve, 2000));
+    let verificationError;
+    for (let attempt = 0; attempt < 15; attempt++) {
+      try {
+        const saved = new Map((await knowtCards()).map(card => [key(card.term), key(card.definition)]));
+        verificationError = undefined;
+        if (missing.every(card => saved.get(key(card.term)) === key(card.definition))) {
+          confirmed = true;
+          break;
+        }
+      } catch (error) { verificationError = error; }
+      if (attempt < 14) await new Promise(resolve => setTimeout(resolve, 2000));
     }
     if (!confirmed) {
       await page.screenshot({ path: join(runtime, 'save-error.png') });
       console.error(`Запросы записи: ${writes.join('; ') || 'не обнаружены'}`);
-      throw new Error('Knowt не подтвердил все новые карточки после сохранения. Снимок: runtime/save-error.png');
+      throw new Error(`Knowt не подтвердил слова и переводы после сохранения. Снимок: runtime/save-error.png${verificationError ? `; последняя ошибка проверки: ${verificationError.message}` : ''}`);
     }
     console.log(`Добавлено и проверено: ${missing.length}`);
   } finally { await context.close(); }

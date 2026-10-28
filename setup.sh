@@ -1,6 +1,7 @@
 #!/bin/zsh
 set -e
 umask 077
+export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT"
 mkdir -p runtime/npm-cache runtime/browsers
