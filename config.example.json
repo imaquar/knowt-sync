@@ -1,0 +1,5 @@
+{
+  "projectPath": "/absolute/path/to/knowt-sync",
+  "googleSheetUrl": "https://docs.google.com/spreadsheets/d/YOUR_SHEET_ID/edit?gid=0",
+  "knowtSetUrl": "https://knowt.com/flashcards/YOUR_SET_ID"
+}
